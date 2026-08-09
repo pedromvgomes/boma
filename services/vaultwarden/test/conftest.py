@@ -79,8 +79,18 @@ class Container:
     def mode_of(self, path: str) -> str:
         return self.exec(f"stat -c '%a' {path}").stdout.strip()
 
-    def sqlite(self, db: str, query: str) -> str:
-        return self.exec(f"sqlite3 {db} \"{query}\"").stdout.strip()
+    def sqlite(self, db: str, query: str, timeout_ms: int = 10000) -> str:
+        """Query SQLite, waiting rather than failing if the vault holds the lock.
+
+        The service keeps the database open, so a query issued right after a
+        restart or restore can hit "database is locked" (SQLITE_BUSY). Without
+        a busy timeout that is a race: it passed locally and failed on the
+        slower CI runner. A flaky test is worse than no test, so the wait is
+        built into the helper rather than sprinkled at call sites.
+        """
+        return self.exec(
+            f'sqlite3 -cmd ".timeout {timeout_ms}" {db} "{query}"'
+        ).stdout.strip()
 
     def unit_active(self, unit: str) -> bool:
         return (

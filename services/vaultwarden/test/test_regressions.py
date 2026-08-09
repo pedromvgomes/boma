@@ -385,7 +385,7 @@ def test_drill_fails_when_the_snapshot_lost_most_of_the_vault(
     A snapshot that kept one user but lost the rest would otherwise pass.
     """
     installed.exec(
-        "sqlite3 /var/lib/boma/vaultwarden/db.sqlite3 "
+        "sqlite3 -cmd '.timeout 10000' /var/lib/boma/vaultwarden/db.sqlite3 "
         "\"INSERT INTO users (uuid,email,name) VALUES ('u2','b@x.test','B'),"
         "('u3','c@x.test','C');\""
     )
@@ -394,11 +394,11 @@ def test_drill_fails_when_the_snapshot_lost_most_of_the_vault(
     # Live vault keeps 3 users; the snapshot we verify has only 1.
     installed.exec("systemctl stop vaultwarden.service")
     installed.exec(
-        "sqlite3 /var/lib/boma/vaultwarden/db.sqlite3 \"DELETE FROM users WHERE uuid!='u2';\""
+        "sqlite3 -cmd '.timeout 10000' /var/lib/boma/vaultwarden/db.sqlite3 \"DELETE FROM users WHERE uuid!='u2';\""
     )
     installed.exec("/opt/boma/vaultwarden/bin/backup.sh")
     installed.exec(
-        "sqlite3 /var/lib/boma/vaultwarden/db.sqlite3 "
+        "sqlite3 -cmd '.timeout 10000' /var/lib/boma/vaultwarden/db.sqlite3 "
         "\"INSERT INTO users (uuid,email,name) VALUES ('u1','a@x.test','A'),('u3','c@x.test','C');\""
     )
 
@@ -422,7 +422,7 @@ def test_drill_tolerates_a_vault_that_gained_users_since_the_snapshot(
 
     # Someone accepts an invitation after the snapshot was taken.
     installed.exec(
-        "sqlite3 /var/lib/boma/vaultwarden/db.sqlite3 "
+        "sqlite3 -cmd '.timeout 10000' /var/lib/boma/vaultwarden/db.sqlite3 "
         "\"INSERT INTO users (uuid,email,name) VALUES ('newbie','n@x.test','N');\""
     )
 
