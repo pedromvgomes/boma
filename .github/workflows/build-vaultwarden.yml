@@ -28,12 +28,17 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  # Pinned fingerprints of dani-garcia's signing keys, used to verify the
-  # web-vault tarball signature. Fetching a key and trusting whatever comes back
-  # would verify nothing; the fingerprint is the actual trust anchor.
+  # Pinned fingerprint of the key that signs the web-vault releases, taken from
+  # upstream's own SECURITY.md:
+  #   https://github.com/dani-garcia/vaultwarden/blob/main/SECURITY.md
+  #
+  # This is "Vaultwarden Security <security@vaultwarden.org>", NOT dani-garcia's
+  # personal GitHub account keys — those were pinned initially and sign nothing
+  # here, so verification could never have succeeded against them. Fetching a
+  # key and trusting whatever comes back verifies nothing; the fingerprint
+  # documented by the project is the trust anchor.
   WEB_VAULT_SIGNING_KEYS: >-
-    1CABAF56583252D51E9534E72FA30DC7130BE717
-    B9B7A108373276BF3C0406F9FC8A7D14C3CD543A
+    13BB3A34C9E380258CE43D595CB150B31F6426BC
 
 jobs:
   check:
@@ -111,32 +116,27 @@ jobs:
           # vendored_openssl compiles OpenSSL from source, which needs perl + make.
           sudo apt-get install -y --no-install-recommends musl-tools musl-dev perl make
 
-      - name: Install Rust toolchain
+      - name: Install Rust toolchain and target
+        # Run INSIDE the checkout so upstream's rust-toolchain.toml applies.
+        #
+        # Vaultwarden pins its toolchain there (currently 1.97.1). Adding the
+        # target from the workspace root added it to `stable` instead, and then
+        # `cargo build` inside this directory silently switched to the pinned
+        # toolchain — which did not have the musl target, failing with
+        # "can't find crate for `core`". Running here means the target is always
+        # added to whatever upstream actually pins, including future changes.
+        working-directory: vaultwarden
         run: |
           set -euo pipefail
-          # Honour upstream's rust-version so we never build with a toolchain
-          # older than the one they support.
-          required=$(grep -m1 '^rust-version' vaultwarden/Cargo.toml | cut -d'"' -f2)
-          echo "Upstream requires Rust ${required}"
 
-          # Install stable AND verify it satisfies upstream's MSRV. Parsing the
-          # requirement and then installing plain stable regardless made the
-          # check decorative: a stable older than upstream's minimum would fail
-          # deep in the build with a confusing dependency error instead of here.
-          rustup toolchain install stable --profile minimal
-          rustup default stable
+          # Materialises the pinned toolchain (rustup reads rust-toolchain.toml).
+          rustup show active-toolchain
           rustup target add "${TARGET}"
-          rustc --version
 
-          if [ -n "${required}" ]; then
-            have=$(rustc --version | awk '{print $2}')
-            lowest=$(printf '%s\n%s\n' "${required}" "${have}" | sort -V | head -1)
-            if [ "${lowest}" != "${required}" ] && [ "${have}" != "${required}" ]; then
-              echo "::error::stable Rust ${have} is older than upstream's required ${required}"
-              exit 1
-            fi
-            echo "Rust ${have} satisfies the required ${required}"
-          fi
+          echo "Toolchain in use: $(rustup show active-toolchain)"
+          echo "rustc: $(rustc --version)"
+          rustup target list --installed | grep -qx "${TARGET}" \
+            || { echo "::error::${TARGET} is not installed for the active toolchain"; exit 1; }
 
       - name: Cache cargo registry and build artifacts
         uses: actions/cache@v6
@@ -145,7 +145,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             vaultwarden/target
-          key: cargo-${{ env.TARGET }}-${{ env.VERSION }}
+          key: cargo-${{ env.TARGET }}-${{ env.VERSION }}-v2
           restore-keys: cargo-${{ env.TARGET }}-
 
       - name: Build
@@ -214,20 +214,30 @@ jobs:
           grep " ${tarball}\$" sha256sums.txt | sha256sum -c -
 
           for fpr in ${WEB_VAULT_SIGNING_KEYS}; do
-            gpg --batch --keyserver hkps://keys.openpgp.org --recv-keys "${fpr}" \
-              || gpg --batch --keyserver hkps://keyserver.ubuntu.com --recv-keys "${fpr}" \
-              || echo "could not fetch ${fpr}, trying next"
+            gpg --batch --list-keys "${fpr}" >/dev/null 2>&1 && continue
+            gpg --batch --keyserver hkps://keys.openpgp.org --recv-keys "${fpr}" 2>/dev/null \
+              || gpg --batch --keyserver hkps://keyserver.ubuntu.com --recv-keys "${fpr}" 2>/dev/null \
+              || echo "could not fetch ${fpr} from any source"
           done
 
-          # Accept a signature from any pinned key; fail if none verifies.
+          # At least one pinned key must actually be present, or "verified"
+          # below could only ever mean "we had nothing to check".
+          present=false
+          for fpr in ${WEB_VAULT_SIGNING_KEYS}; do
+            gpg --batch --list-keys "${fpr}" >/dev/null 2>&1 && present=true
+          done
+          if [ "${present}" != "true" ]; then
+            echo "::error::none of the pinned signing keys could be imported"
+            exit 1
+          fi
+
+          # Accept a signature from any pinned key. VALIDSIG names the key that
+          # MADE the signature — a signing subkey here — while its last field is
+          # the primary key fingerprint, so the pin is matched anywhere on the line.
+          status=$(gpg --batch --status-fd 1 --verify "${tarball}.asc" "${tarball}" 2>/dev/null || true)
           verified=false
           for fpr in ${WEB_VAULT_SIGNING_KEYS}; do
-            # gpg's VALIDSIG line names the key that MADE the signature, which
-            # is the signing subkey whenever one is used; the primary key
-            # fingerprint is the last field. Matching only the first field would
-            # reject every subkey-signed release.
-            if gpg --batch --status-fd 1 --verify "${tarball}.asc" "${tarball}" 2>/dev/null \
-                 | grep -E "^\[GNUPG:\] VALIDSIG " | grep -q "${fpr}"; then
+            if printf '%s' "${status}" | grep -E '^\[GNUPG:\] VALIDSIG ' | grep -q "${fpr}"; then
               echo "web vault signature verified against ${fpr}"
               verified=true
               break
@@ -235,6 +245,9 @@ jobs:
           done
           if [ "${verified}" != "true" ]; then
             echo "::error::web vault signature did not verify against any pinned key"
+            echo "--- gpg status ---"
+            printf '%s\n' "${status}"
+            gpg --batch --verify "${tarball}.asc" "${tarball}" 2>&1 || true
             exit 1
           fi
 
