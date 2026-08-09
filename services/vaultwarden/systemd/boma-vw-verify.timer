@@ -1,0 +1,13 @@
+[Unit]
+Description=boma — monthly automated restore drill
+Documentation=https://github.com/pedromvgomes/boma/blob/main/docs/RECOVERY.md
+
+[Timer]
+# Monthly. An unverified backup is a guess: this is the only thing that proves
+# the snapshots actually restore to a working database.
+OnCalendar=*-*-01 04:30:00
+Persistent=true
+RandomizedDelaySec=1h
+
+[Install]
+WantedBy=timers.target

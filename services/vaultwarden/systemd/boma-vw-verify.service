@@ -1,0 +1,53 @@
+[Unit]
+Description=boma — restore-verify the Vaultwarden backups (automated drill)
+Documentation=https://github.com/pedromvgomes/boma/blob/main/docs/RECOVERY.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=@VW_BIN_DIR@/verify-backup.sh
+
+# A full restore competes with the running vault for IO and CPU.
+Nice=15
+IOSchedulingClass=idle
+# A drill must never become the reason the vault is unavailable.
+TimeoutStartSec=2h
+
+# restic caches pack metadata under $HOME by default, but ProtectHome=yes makes
+# /root inaccessible — so every scheduled run was fully uncached, re-downloading
+# metadata from R2 on each backup, forget and check. CacheDirectory gives it a
+# writable, persistent location that survives the sandbox.
+CacheDirectory=boma/restic
+Environment=RESTIC_CACHE_DIR=/var/cache/boma/restic
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @obsolete
+# `restic restore` running as root restores ownership, which needs chown;
+# @privileged subsumes @chown, so it has to be re-added or the drill fails.
+SystemCallFilter=@chown
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+UMask=0077
+
+ReadWritePaths=@VW_DATA_DIR@ @VW_SCRATCH_BASE@
+
+[Install]
+WantedBy=multi-user.target

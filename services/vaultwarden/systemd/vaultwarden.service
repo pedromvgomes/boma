@@ -1,0 +1,61 @@
+[Unit]
+Description=Vaultwarden password vault
+Documentation=https://github.com/dani-garcia/vaultwarden
+Documentation=https://github.com/pedromvgomes/boma/blob/main/docs/INGRESS.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@VW_USER@
+Group=@VW_GROUP@
+EnvironmentFile=@VW_APP_ENV@
+WorkingDirectory=@VW_DATA_DIR@
+ExecStart=@VW_BIN_DIR@/vaultwarden
+Restart=on-failure
+RestartSec=5s
+
+# ---------------------------------------------------------------------------
+# Hardening.
+#
+# NOTE: under rootless podman the namespace-based options below are SILENTLY
+# IGNORED — the unit still reports success while /usr stays writable. They are
+# therefore verified statically with `systemd-analyze security` in CI rather
+# than asserted by the container tests, which would pass vacuously.
+# See docs/adr/0005-two-test-frameworks-and-static-hardening-gate.md
+# ---------------------------------------------------------------------------
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @obsolete
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0077
+
+# Only the data directory is writable; the binary and web vault stay read-only,
+# so a compromised process cannot rewrite the executable it will run next boot.
+ReadWritePaths=@VW_DATA_DIR@
+
+# AF_UNIX is needed for journald logging; AF_INET/AF_INET6 for HTTP, SMTP and
+# icon fetching. No IPAddress* filtering: outbound SMTP would break.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

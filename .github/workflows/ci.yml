@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install shellcheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends shellcheck
+
+      - name: Lint all shell scripts
+        run: |
+          set -euo pipefail
+          # -x follows `source` directives so library functions resolve.
+          shellcheck -x -S style lib/*.sh services/*/*.sh
+
+  unit:
+    name: bats unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install bats
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends bats
+
+      - name: Run unit tests
+        run: bats lib/test/
+
+  e2e:
+    name: pytest end-to-end
+    # Native arm64, matching the Raspberry Pi target and the developer's Mac,
+    # so the container exercises the same architecture throughout.
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install podman
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends podman
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9
+        with:
+          enable-cache: true
+
+      - name: Run end-to-end suite
+        # Parallelism comes from pyproject's addopts (-n 4).
+        run: uv run --group test pytest services/ -q
+
+      - name: Collect container diagnostics on failure
+        if: failure()
+        run: |
+          podman ps -a || true
+          for c in $(podman ps -aq); do
+            echo "=== $c ==="
+            podman logs "$c" 2>&1 | tail -50 || true
+          done

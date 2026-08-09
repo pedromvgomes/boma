@@ -1,0 +1,32 @@
+version: 2
+
+# Three ecosystems, because adding Python to a Bash repo was not the only new
+# dependency surface. Note there is deliberately no `gitsubmodule` entry: the
+# bats helper libraries were not vendored as submodules, so the unit tests use
+# plain bats-core with no third-party assertion helpers.
+updates:
+  # GitHub Actions used by the build and CI workflows.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+
+  # pytest and friends, pinned via pyproject.toml / uv.lock.
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: test
+
+  # The Debian base image of the end-to-end test container. This only works
+  # because the file is named `Dockerfile`; Dependabot's docker ecosystem does
+  # not discover a file named `Containerfile`.
+  - package-ecosystem: docker
+    directory: /services/vaultwarden/test
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: test

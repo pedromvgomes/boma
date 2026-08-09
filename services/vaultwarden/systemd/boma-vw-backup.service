@@ -1,0 +1,58 @@
+[Unit]
+Description=boma — back up the Vaultwarden vault to restic
+Documentation=https://github.com/pedromvgomes/boma/blob/main/docs/RECOVERY.md
+After=network-online.target vaultwarden.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Without this, systemd's 90s DefaultTimeoutStartSec applies to the whole run.
+# restic backup + forget + check against R2 from a Pi routinely exceeds that, so
+# the unit was SIGTERMed every night — and bash's default SIGTERM disposition
+# skips the EXIT trap, so no failure notification was ever sent.
+TimeoutStartSec=2h
+# Runs as root: it reads 0600 credential files and snapshots the vault database.
+User=root
+ExecStart=@VW_BIN_DIR@/backup.sh
+
+# Backups are IO-heavy; keep them from starving the vault itself.
+Nice=10
+IOSchedulingClass=idle
+
+# restic caches pack metadata under $HOME by default, but ProtectHome=yes makes
+# /root inaccessible — so every scheduled run was fully uncached, re-downloading
+# metadata from R2 on each backup, forget and check. CacheDirectory gives it a
+# writable, persistent location that survives the sandbox.
+CacheDirectory=boma/restic
+Environment=RESTIC_CACHE_DIR=/var/cache/boma/restic
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @obsolete
+# @privileged subsumes @chown, but staging the vault with `cp -a` preserves
+# ownership of vaultwarden-owned files and therefore MUST chown. Without this
+# re-add the copy dies with SIGSYS and every nightly backup fails.
+SystemCallFilter=@chown
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+UMask=0077
+
+ReadWritePaths=@VW_DATA_DIR@ @VW_STAGING_BASE@ @VW_SCRATCH_BASE@
+
+[Install]
+WantedBy=multi-user.target

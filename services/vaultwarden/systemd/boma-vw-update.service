@@ -1,0 +1,52 @@
+[Unit]
+Description=boma — update Vaultwarden if a soaked release is available
+Documentation=https://github.com/pedromvgomes/boma/blob/main/docs/adr/0004-soak-then-unattended-updates.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Without this, systemd's 90s DefaultTimeoutStartSec applies to the whole run.
+# restic backup + forget + check against R2 from a Pi routinely exceeds that, so
+# the unit was SIGTERMed every night — and bash's default SIGTERM disposition
+# skips the EXIT trap, so no failure notification was ever sent.
+TimeoutStartSec=2h
+# Runs as root: swaps the binary and restarts the vaultwarden unit.
+User=root
+ExecStart=@VW_BIN_DIR@/update.sh
+
+# restic caches pack metadata under $HOME by default, but ProtectHome=yes makes
+# /root inaccessible — so every scheduled run was fully uncached, re-downloading
+# metadata from R2 on each backup, forget and check. CacheDirectory gives it a
+# writable, persistent location that survives the sandbox.
+CacheDirectory=boma/restic
+Environment=RESTIC_CACHE_DIR=/var/cache/boma/restic
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@obsolete
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+UMask=0077
+
+# Writes the new binary into the install dir, snapshots into the data dir, and
+# invokes backup.sh, which stages into @VW_STAGING_BASE@.
+ReadWritePaths=@VW_DATA_DIR@ @VW_STAGING_BASE@ @VW_SCRATCH_BASE@ @VW_INSTALL_DIR@
+# update.sh runs backup.sh, which uses `cp -a` on vaultwarden-owned files and so
+# needs chown; the filter here does not subtract @privileged, but be explicit.
+SystemCallFilter=@chown
+
+[Install]
+WantedBy=multi-user.target

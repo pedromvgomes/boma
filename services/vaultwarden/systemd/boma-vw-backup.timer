@@ -1,0 +1,14 @@
+[Unit]
+Description=boma — nightly Vaultwarden backup
+Documentation=https://github.com/pedromvgomes/boma/blob/main/docs/RECOVERY.md
+
+[Timer]
+OnCalendar=*-*-* 02:30:00
+# Catch up after downtime: a Pi that was off at 02:30 must still back up, or an
+# unreliable host would silently accumulate days with no backup at all.
+Persistent=true
+# Spread load and avoid every timer firing on the same second.
+RandomizedDelaySec=15m
+
+[Install]
+WantedBy=timers.target
