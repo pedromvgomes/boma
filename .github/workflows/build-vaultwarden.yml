@@ -1,0 +1,306 @@
+name: Build Vaultwarden
+
+# Vaultwarden publishes no prebuilt server binaries — releases are source-only and
+# the sole distributed artifact is a Docker image. boma runs bare metal with no
+# container runtime, so we build the binary ourselves.
+# See docs/adr/0001-build-vaultwarden-from-source.md.
+
+on:
+  schedule:
+    - cron: '17 4 * * *'      # daily upstream check
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Upstream version to build (default: latest release)'
+        required: false
+        type: string
+      force:
+        description: 'Rebuild even if the release already exists'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-vaultwarden
+  cancel-in-progress: false
+
+env:
+  # Pinned fingerprints of dani-garcia's signing keys, used to verify the
+  # web-vault tarball signature. Fetching a key and trusting whatever comes back
+  # would verify nothing; the fingerprint is the actual trust anchor.
+  WEB_VAULT_SIGNING_KEYS: >-
+    1CABAF56583252D51E9534E72FA30DC7130BE717
+    B9B7A108373276BF3C0406F9FC8A7D14C3CD543A
+
+jobs:
+  check:
+    name: Check for a new upstream release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      web_vault: ${{ steps.resolve.outputs.web_vault }}
+      should_build: ${{ steps.resolve.outputs.should_build }}
+    steps:
+      - name: Resolve upstream and web-vault versions
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_VERSION: ${{ inputs.version }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "${INPUT_VERSION}" ]; then
+            version="${INPUT_VERSION}"
+          else
+            version=$(gh release view --repo dani-garcia/vaultwarden \
+                        --json tagName --jq .tagName)
+          fi
+          version="${version#v}"
+          echo "Upstream Vaultwarden version: ${version}"
+
+          web_vault=$(gh release view --repo dani-garcia/bw_web_builds \
+                        --json tagName --jq .tagName)
+          echo "Web vault version: ${web_vault}"
+
+          # Does this repository already publish that build?
+          if [ "${FORCE}" != "true" ] \
+             && gh release view "vaultwarden/${version}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "Release vaultwarden/${version} already exists; nothing to do."
+            should_build=false
+          else
+            should_build=true
+          fi
+
+          {
+            echo "version=${version}"
+            echo "web_vault=${web_vault}"
+            echo "should_build=${should_build}"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build static aarch64 binary
+    needs: check
+    if: needs.check.outputs.should_build == 'true'
+    # Free and unlimited on public repositories, and NATIVE arm64 — so no
+    # cross-compilation or QEMU is involved.
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: write        # publish the release
+      id-token: write        # provenance attestation
+      attestations: write
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+      WEB_VAULT: ${{ needs.check.outputs.web_vault }}
+      TARGET: aarch64-unknown-linux-musl
+    steps:
+      - name: Check out upstream Vaultwarden at the release tag
+        uses: actions/checkout@v7
+        with:
+          repository: dani-garcia/vaultwarden
+          ref: ${{ env.VERSION }}
+          path: vaultwarden
+
+      - name: Install musl toolchain
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          # vendored_openssl compiles OpenSSL from source, which needs perl + make.
+          sudo apt-get install -y --no-install-recommends musl-tools musl-dev perl make
+
+      - name: Install Rust toolchain
+        run: |
+          set -euo pipefail
+          # Honour upstream's rust-version so we never build with a toolchain
+          # older than the one they support.
+          required=$(grep -m1 '^rust-version' vaultwarden/Cargo.toml | cut -d'"' -f2)
+          echo "Upstream requires Rust ${required}"
+
+          # Install stable AND verify it satisfies upstream's MSRV. Parsing the
+          # requirement and then installing plain stable regardless made the
+          # check decorative: a stable older than upstream's minimum would fail
+          # deep in the build with a confusing dependency error instead of here.
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add "${TARGET}"
+          rustc --version
+
+          if [ -n "${required}" ]; then
+            have=$(rustc --version | awk '{print $2}')
+            lowest=$(printf '%s\n%s\n' "${required}" "${have}" | sort -V | head -1)
+            if [ "${lowest}" != "${required}" ] && [ "${have}" != "${required}" ]; then
+              echo "::error::stable Rust ${have} is older than upstream's required ${required}"
+              exit 1
+            fi
+            echo "Rust ${have} satisfies the required ${required}"
+          fi
+
+      - name: Cache cargo registry and build artifacts
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            vaultwarden/target
+          key: cargo-${{ env.TARGET }}-${{ env.VERSION }}
+          restore-keys: cargo-${{ env.TARGET }}-
+
+      - name: Build
+        working-directory: vaultwarden
+        env:
+          CC_aarch64_unknown_linux_musl: musl-gcc
+          # Upstream leaves default features empty (all DB options commented
+          # out), so sqlite MUST be requested explicitly. vendored_openssl is
+          # what makes a fully static link possible.
+          CARGO_FEATURES: sqlite,vendored_openssl
+          VW_VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          set -euo pipefail
+          cargo build --release --locked \
+            --target "${TARGET}" \
+            --features "${CARGO_FEATURES}"
+
+      - name: Verify the binary is genuinely static
+        working-directory: vaultwarden
+        run: |
+          set -euo pipefail
+          bin="target/${TARGET}/release/vaultwarden"
+          file "$bin"
+
+          # The whole point of this build is immunity to the host's glibc, so a
+          # dynamically-linked result is a hard failure rather than a warning.
+          #
+          # Rust's musl targets default to static-PIE, which `file` reports as
+          # "static-pie linked" — NOT "statically linked". Matching only the
+          # latter would fail every build and no release would ever be published.
+          if ! file "$bin" | grep -Eq 'statically linked|static-pie linked'; then
+            echo "::error::binary is not statically linked; a host OS upgrade could break it"
+            file "$bin"
+            exit 1
+          fi
+
+          # Authoritative cross-check: a static binary has no interpreter and no
+          # NEEDED entries, regardless of how `file` phrases it.
+          if command -v readelf >/dev/null; then
+            if readelf -l "$bin" | grep -q 'program interpreter'; then
+              echo "::error::binary requests a dynamic loader; it is not static"
+              exit 1
+            fi
+            if readelf -d "$bin" 2>/dev/null | grep -q 'NEEDED'; then
+              echo "::error::binary has dynamic library dependencies"
+              readelf -d "$bin" | grep NEEDED
+              exit 1
+            fi
+          fi
+          "$bin" --version || true
+
+      - name: Download and verify the web vault
+        run: |
+          set -euo pipefail
+          mkdir -p dist && cd dist
+
+          base="https://github.com/dani-garcia/bw_web_builds/releases/download/${WEB_VAULT}"
+          tarball="bw_web_${WEB_VAULT}.tar.gz"
+          curl -fsSL -o "${tarball}"     "${base}/${tarball}"
+          curl -fsSL -o "${tarball}.asc" "${base}/${tarball}.asc"
+          curl -fsSL -o sha256sums.txt   "${base}/sha256sums.txt"
+
+          # Checksum first. This only proves the download is intact — it is not
+          # an independent trust check, because the checksum file ships from the
+          # same release. The signature below is what actually establishes trust.
+          grep " ${tarball}\$" sha256sums.txt | sha256sum -c -
+
+          for fpr in ${WEB_VAULT_SIGNING_KEYS}; do
+            gpg --batch --keyserver hkps://keys.openpgp.org --recv-keys "${fpr}" \
+              || gpg --batch --keyserver hkps://keyserver.ubuntu.com --recv-keys "${fpr}" \
+              || echo "could not fetch ${fpr}, trying next"
+          done
+
+          # Accept a signature from any pinned key; fail if none verifies.
+          verified=false
+          for fpr in ${WEB_VAULT_SIGNING_KEYS}; do
+            # gpg's VALIDSIG line names the key that MADE the signature, which
+            # is the signing subkey whenever one is used; the primary key
+            # fingerprint is the last field. Matching only the first field would
+            # reject every subkey-signed release.
+            if gpg --batch --status-fd 1 --verify "${tarball}.asc" "${tarball}" 2>/dev/null \
+                 | grep -E "^\[GNUPG:\] VALIDSIG " | grep -q "${fpr}"; then
+              echo "web vault signature verified against ${fpr}"
+              verified=true
+              break
+            fi
+          done
+          if [ "${verified}" != "true" ]; then
+            echo "::error::web vault signature did not verify against any pinned key"
+            exit 1
+          fi
+
+          tar xzf "${tarball}"
+          rm -f "${tarball}" "${tarball}.asc" sha256sums.txt
+
+      - name: Assemble release artifacts
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          cp "vaultwarden/target/${TARGET}/release/vaultwarden" out/vaultwarden
+          chmod 0755 out/vaultwarden
+          tar czf "out/web-vault-${WEB_VAULT}.tar.gz" -C dist web-vault
+          cd out
+          sha256sum vaultwarden "web-vault-${WEB_VAULT}.tar.gz" > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          # The web vault is attested too: it executes client-side crypto in the
+          # browser, so a swapped web-vault tarball can exfiltrate the vault just
+          # as effectively as a swapped server binary.
+          subject-path: |
+            out/vaultwarden
+            out/web-vault-*.tar.gz
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          notes=$(cat <<EOF
+          Static \`aarch64-unknown-linux-musl\` build of
+          [Vaultwarden ${VERSION}](https://github.com/dani-garcia/vaultwarden/releases/tag/${VERSION}),
+          built from source by [\`build-vaultwarden.yml\`](../../.github/workflows/build-vaultwarden.yml).
+
+          | | |
+          |---|---|
+          | Vaultwarden | \`${VERSION}\` |
+          | Web vault | \`${WEB_VAULT}\` |
+          | Target | \`${TARGET}\` |
+          | Features | \`sqlite,vendored_openssl\` |
+
+          Statically linked, so it is unaffected by the host's glibc version.
+          Verify with \`SHA256SUMS\` and the attached build provenance attestation.
+          EOF
+          )
+          gh release create "vaultwarden/${VERSION}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "Vaultwarden ${VERSION}" \
+            --notes "${notes}" \
+            out/vaultwarden "out/web-vault-${WEB_VAULT}.tar.gz" out/SHA256SUMS
+
+      - name: Report failure
+        # A broken build pipeline is SILENT: the Pi keeps running the last good
+        # binary and simply stops receiving updates. A green-checkmark-only
+        # signal would let that drift indefinitely.
+        if: failure()
+        env:
+          NOTIFY_URL: ${{ secrets.BOMA_NOTIFY_URL }}
+        run: |
+          set -euo pipefail
+          echo "::error::Vaultwarden build failed for ${VERSION}"
+          if [ -n "${NOTIFY_URL:-}" ]; then
+            curl -fsS -m 10 -H 'Content-Type: application/json' \
+              -d "{\"host\":\"github-actions\",\"severity\":\"error\",\"subject\":\"Vaultwarden build failed\",\"body\":\"version ${VERSION} — ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}\"}" \
+              "${NOTIFY_URL}" || echo "notify webhook failed"
+          fi

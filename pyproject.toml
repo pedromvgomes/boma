@@ -1,0 +1,23 @@
+[project]
+name = "boma-tests"
+version = "0.1.0"
+description = "End-to-end test suite for boma's bare-metal service scripts"
+requires-python = ">=3.11"
+dependencies = []
+
+[dependency-groups]
+test = [
+    "pytest>=8.3.0",
+    "pytest-timeout>=2.3.0",
+    "pytest-xdist>=3.6.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["services"]
+# Container-driven tests can hang on a wedged systemd or a stuck health check;
+# without a timeout a single bad run blocks CI until the job limit.
+timeout = 600
+# Each test builds and boots its own systemd container, so the suite is almost
+# entirely wait. Four workers cuts it from ~20 minutes to ~6 with no shared
+# state between tests — every fixture creates and tears down its own container.
+addopts = "-ra --strict-markers -n 4"

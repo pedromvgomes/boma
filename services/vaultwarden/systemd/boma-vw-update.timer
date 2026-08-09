@@ -1,0 +1,13 @@
+[Unit]
+Description=boma — check for soaked Vaultwarden updates
+Documentation=https://github.com/pedromvgomes/boma/blob/main/docs/adr/0004-soak-then-unattended-updates.md
+
+[Timer]
+# After the nightly backup, so a failed update always has a fresh snapshot to
+# roll back to.
+OnCalendar=*-*-* 03:30:00
+Persistent=true
+RandomizedDelaySec=30m
+
+[Install]
+WantedBy=timers.target

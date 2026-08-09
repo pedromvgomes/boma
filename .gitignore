@@ -7,8 +7,14 @@ node_modules/
 .vscode/
 .idea/
 
-# files and folders managed by agentic toolkit 
+# python test suite
+.venv/
+__pycache__/
+.pytest_cache/
+
+# files and folders managed by agentic toolkit
 .claude
 .mcp.json
 CLAUDE.md
 .agentic-toolkit.lock.yaml
+.serena/
