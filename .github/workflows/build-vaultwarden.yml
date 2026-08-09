@@ -28,12 +28,17 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  # Pinned fingerprints of dani-garcia's signing keys, used to verify the
-  # web-vault tarball signature. Fetching a key and trusting whatever comes back
-  # would verify nothing; the fingerprint is the actual trust anchor.
+  # Pinned fingerprint of the key that signs the web-vault releases, taken from
+  # upstream's own SECURITY.md:
+  #   https://github.com/dani-garcia/vaultwarden/blob/main/SECURITY.md
+  #
+  # This is "Vaultwarden Security <security@vaultwarden.org>", NOT dani-garcia's
+  # personal GitHub account keys — those were pinned initially and sign nothing
+  # here, so verification could never have succeeded against them. Fetching a
+  # key and trusting whatever comes back verifies nothing; the fingerprint
+  # documented by the project is the trust anchor.
   WEB_VAULT_SIGNING_KEYS: >-
-    1CABAF56583252D51E9534E72FA30DC7130BE717
-    B9B7A108373276BF3C0406F9FC8A7D14C3CD543A
+    13BB3A34C9E380258CE43D595CB150B31F6426BC
 
 jobs:
   check:
@@ -209,20 +214,30 @@ jobs:
           grep " ${tarball}\$" sha256sums.txt | sha256sum -c -
 
           for fpr in ${WEB_VAULT_SIGNING_KEYS}; do
-            gpg --batch --keyserver hkps://keys.openpgp.org --recv-keys "${fpr}" \
-              || gpg --batch --keyserver hkps://keyserver.ubuntu.com --recv-keys "${fpr}" \
-              || echo "could not fetch ${fpr}, trying next"
+            gpg --batch --list-keys "${fpr}" >/dev/null 2>&1 && continue
+            gpg --batch --keyserver hkps://keys.openpgp.org --recv-keys "${fpr}" 2>/dev/null \
+              || gpg --batch --keyserver hkps://keyserver.ubuntu.com --recv-keys "${fpr}" 2>/dev/null \
+              || echo "could not fetch ${fpr} from any source"
           done
 
-          # Accept a signature from any pinned key; fail if none verifies.
+          # At least one pinned key must actually be present, or "verified"
+          # below could only ever mean "we had nothing to check".
+          present=false
+          for fpr in ${WEB_VAULT_SIGNING_KEYS}; do
+            gpg --batch --list-keys "${fpr}" >/dev/null 2>&1 && present=true
+          done
+          if [ "${present}" != "true" ]; then
+            echo "::error::none of the pinned signing keys could be imported"
+            exit 1
+          fi
+
+          # Accept a signature from any pinned key. VALIDSIG names the key that
+          # MADE the signature — a signing subkey here — while its last field is
+          # the primary key fingerprint, so the pin is matched anywhere on the line.
+          status=$(gpg --batch --status-fd 1 --verify "${tarball}.asc" "${tarball}" 2>/dev/null || true)
           verified=false
           for fpr in ${WEB_VAULT_SIGNING_KEYS}; do
-            # gpg's VALIDSIG line names the key that MADE the signature, which
-            # is the signing subkey whenever one is used; the primary key
-            # fingerprint is the last field. Matching only the first field would
-            # reject every subkey-signed release.
-            if gpg --batch --status-fd 1 --verify "${tarball}.asc" "${tarball}" 2>/dev/null \
-                 | grep -E "^\[GNUPG:\] VALIDSIG " | grep -q "${fpr}"; then
+            if printf '%s' "${status}" | grep -E '^\[GNUPG:\] VALIDSIG ' | grep -q "${fpr}"; then
               echo "web vault signature verified against ${fpr}"
               verified=true
               break
@@ -230,6 +245,9 @@ jobs:
           done
           if [ "${verified}" != "true" ]; then
             echo "::error::web vault signature did not verify against any pinned key"
+            echo "--- gpg status ---"
+            printf '%s\n' "${status}"
+            gpg --batch --verify "${tarball}.asc" "${tarball}" 2>&1 || true
             exit 1
           fi
 
