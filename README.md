@@ -54,6 +54,31 @@ What gets installed:
 
 TLS, DNS and the tunnel are **not** boma's job — see [docs/INGRESS.md](docs/INGRESS.md).
 
+## Verifying release authenticity
+
+Releases carry [build provenance attestations](https://docs.github.com/actions/security-guides/using-artifact-attestations),
+and `install.sh` / `update.sh` check them with `gh attestation verify`.
+
+That check **requires credentials** — `gh` exits 4 unauthenticated, without
+verifying anything. So boma distinguishes two outcomes that are easy to conflate:
+
+| Situation | Behaviour |
+|---|---|
+| Attestation does not match | **abort** — the artifact is not what the workflow built |
+| Cannot check (no `gh`, or no credentials) | **warn and continue** — checksums still verified |
+
+Conflating them would brick the host: a fresh Pi has no authenticated `gh`, so
+every install and unattended update would abort.
+
+To get the stronger guarantee, put a token in `/etc/boma/vaultwarden/boma.env`:
+
+```bash
+GITHUB_TOKEN='ghp_...'          # public-repo read is enough
+VW_REQUIRE_ATTESTATION=1        # optional: make "cannot check" fatal too
+```
+
+`VW_SKIP_ATTESTATION=1` disables the check entirely.
+
 ## Design decisions worth knowing
 
 - **Updates soak before installing, and roll back the database as well as the binary.**

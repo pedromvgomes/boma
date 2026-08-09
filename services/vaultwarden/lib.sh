@@ -240,6 +240,27 @@ vw_snapshot_sqlite() {
     log_debug "sqlite snapshot written to $dest"
 }
 
+# vw_attestation_possible — can build provenance actually be checked here?
+#
+# `gh attestation verify` needs credentials: unauthenticated it exits 4 without
+# checking anything. Probing capability up front lets the caller tell "cannot
+# check" apart from "check failed", which are very different events.
+_VW_ATTESTATION_REASON=""
+vw_attestation_possible() {
+    if ! command -v gh >/dev/null 2>&1; then
+        _VW_ATTESTATION_REASON="gh is not installed"
+        return 1
+    fi
+    if [[ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]]; then
+        return 0
+    fi
+    if gh auth status >/dev/null 2>&1; then
+        return 0
+    fi
+    _VW_ATTESTATION_REASON="gh is installed but not authenticated (no GITHUB_TOKEN and no gh auth login)"
+    return 1
+}
+
 # vw_download_release <version> <destination-dir>
 #
 # Downloads the binary, web vault and SHA256SUMS for a release, verifies the
@@ -270,25 +291,40 @@ vw_download_release() {
     # The checksum proves TRANSFER integrity only: SHA256SUMS ships from the
     # same release, so anyone who can rewrite the release can rewrite both. The
     # build-provenance attestation is what proves the binary came from our
-    # workflow building the upstream source, and it is the only defence against
-    # a compromised release.
+    # workflow building the upstream source.
+    #
+    # Two outcomes are deliberately NOT the same thing:
+    #
+    #   verification FAILED      the artifact does not match its attestation.
+    #                            That is an attack or a corrupt release. Abort.
+    #
+    #   verification IMPOSSIBLE  we have no way to check (gh missing, or gh
+    #                            present but unauthenticated — `gh attestation
+    #                            verify` requires credentials and exits 4
+    #                            without them). Warn loudly and continue.
+    #
+    # Conflating them bricked the host: a fresh Pi has no authenticated gh, so
+    # EVERY install and every unattended update aborted, turning a defence-in-
+    # depth control into a total outage. Set VW_REQUIRE_ATTESTATION=1 to make
+    # "impossible" fatal too, once a token is in place.
     if [[ "${VW_SKIP_ATTESTATION:-0}" == "1" ]]; then
-        # Checked FIRST. Nesting it in the "gh is absent" branch made the escape
-        # hatch unreachable exactly when the error message told the operator to
-        # use it — an unauthenticated or offline gh then blocked all installs.
         log_warn "attestation verification skipped (VW_SKIP_ATTESTATION=1)"
-    elif command -v gh >/dev/null 2>&1; then
+    elif vw_attestation_possible; then
         if gh attestation verify "${dest}/vaultwarden" \
              --repo "$VW_BOMA_REPO" >/dev/null 2>&1; then
             log_info "build provenance attestation verified"
         else
             die "build provenance attestation FAILED for ${version}.
 The checksum matched, but the binary cannot be shown to have come from ${VW_BOMA_REPO}'s build workflow.
-Refusing to install. Set VW_SKIP_ATTESTATION=1 only if you understand why this is failing."
+Refusing to install."
         fi
+    elif [[ "${VW_REQUIRE_ATTESTATION:-0}" == "1" ]]; then
+        die "cannot verify build provenance for ${version} and VW_REQUIRE_ATTESTATION=1.
+Install gh and provide a GitHub token (GITHUB_TOKEN in ${VW_BOMA_ENV}) so attestations can be checked."
     else
-        log_warn "gh is not installed: cannot verify the build provenance attestation"
-        log_warn "install it (apt-get install gh) so releases are checked for authenticity, not just integrity"
+        log_warn "build provenance NOT verified: ${_VW_ATTESTATION_REASON}"
+        log_warn "checksums matched, but authenticity was not established"
+        log_warn "set GITHUB_TOKEN in ${VW_BOMA_ENV} to enable verification (see README)"
     fi
 
     tar xzf "${dest}/${web_asset}" -C "$dest" || die "could not unpack ${web_asset}"
