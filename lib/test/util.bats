@@ -1,6 +1,16 @@
 #!/usr/bin/env bats
 # Unit tests for lib/util.sh — atomic writes and secret generation.
 
+# mode_of <path> — file mode in octal, portable across GNU and BSD stat.
+#
+# GNU is tried FIRST and the BSD form only on failure: on Linux `stat -f` is a
+# valid flag meaning "filesystem info", so it succeeds and returns the wrong
+# thing entirely. A BSD-first chain therefore never falls through, and the
+# comparison silently used filesystem metadata.
+mode_of() {
+    stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1" 2>/dev/null
+}
+
 setup() {
     BOMA_LIB_DIR="$(cd "${BATS_TEST_DIRNAME}/.." && pwd)"
     export BOMA_LIB_DIR
@@ -19,7 +29,7 @@ teardown() {
 
 @test "atomic_write applies the requested mode" {
     printf 'secret\n' | atomic_write "$TESTDIR/secret.txt" 0600
-    mode=$(stat -f '%Lp' "$TESTDIR/secret.txt" 2>/dev/null || stat -c '%a' "$TESTDIR/secret.txt")
+    mode=$(mode_of "$TESTDIR/secret.txt")
     [ "$mode" = "600" ]
 }
 
@@ -48,7 +58,7 @@ teardown() {
     chmod 0750 "$TESTDIR/secrets"
     printf 'topsecret\n' | atomic_write "$TESTDIR/secrets/key" 0600
 
-    mode=$(stat -f '%Lp' "$TESTDIR/secrets" 2>/dev/null || stat -c '%a' "$TESTDIR/secrets")
+    mode=$(mode_of "$TESTDIR/secrets")
     [ "$mode" = "750" ] || {
         echo "directory mode changed to $mode, expected 750"
         return 1
