@@ -41,7 +41,7 @@ def test_verify_backup_passes_on_a_healthy_snapshot(installed: Container) -> Non
 def test_restore_round_trip_recovers_lost_data(installed: Container) -> None:
     """Destroy the live vault, restore it, and prove it serves again."""
     installed.exec(
-        "sqlite3 /var/lib/boma/vaultwarden/db.sqlite3 "
+        "sqlite3 -cmd '.timeout 10000' /var/lib/boma/vaultwarden/db.sqlite3 "
         "\"INSERT INTO ciphers (uuid, user_uuid, data) VALUES ('canary', 'seed-user-0001', 'secret');\""
     )
     installed.exec("/opt/boma/vaultwarden/bin/backup.sh --tag test")
@@ -168,7 +168,7 @@ def test_verify_backup_fails_when_the_vault_is_empty(installed: Container) -> No
     containing nothing — the failure mode a naive integrity check would miss.
     """
     installed.exec("systemctl stop vaultwarden.service")
-    installed.exec("sqlite3 /var/lib/boma/vaultwarden/db.sqlite3 'DELETE FROM users;'")
+    installed.exec("sqlite3 -cmd '.timeout 10000' /var/lib/boma/vaultwarden/db.sqlite3 'DELETE FROM users;'")
     installed.exec("/opt/boma/vaultwarden/bin/backup.sh")
 
     result = installed.exec(

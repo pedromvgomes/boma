@@ -385,7 +385,7 @@ def test_drill_fails_when_the_snapshot_lost_most_of_the_vault(
     A snapshot that kept one user but lost the rest would otherwise pass.
     """
     installed.exec(
-        "sqlite3 /var/lib/boma/vaultwarden/db.sqlite3 "
+        "sqlite3 -cmd '.timeout 10000' /var/lib/boma/vaultwarden/db.sqlite3 "
         "\"INSERT INTO users (uuid,email,name) VALUES ('u2','b@x.test','B'),"
         "('u3','c@x.test','C');\""
     )
@@ -394,11 +394,11 @@ def test_drill_fails_when_the_snapshot_lost_most_of_the_vault(
     # Live vault keeps 3 users; the snapshot we verify has only 1.
     installed.exec("systemctl stop vaultwarden.service")
     installed.exec(
-        "sqlite3 /var/lib/boma/vaultwarden/db.sqlite3 \"DELETE FROM users WHERE uuid!='u2';\""
+        "sqlite3 -cmd '.timeout 10000' /var/lib/boma/vaultwarden/db.sqlite3 \"DELETE FROM users WHERE uuid!='u2';\""
     )
     installed.exec("/opt/boma/vaultwarden/bin/backup.sh")
     installed.exec(
-        "sqlite3 /var/lib/boma/vaultwarden/db.sqlite3 "
+        "sqlite3 -cmd '.timeout 10000' /var/lib/boma/vaultwarden/db.sqlite3 "
         "\"INSERT INTO users (uuid,email,name) VALUES ('u1','a@x.test','A'),('u3','c@x.test','C');\""
     )
 
@@ -422,7 +422,7 @@ def test_drill_tolerates_a_vault_that_gained_users_since_the_snapshot(
 
     # Someone accepts an invitation after the snapshot was taken.
     installed.exec(
-        "sqlite3 /var/lib/boma/vaultwarden/db.sqlite3 "
+        "sqlite3 -cmd '.timeout 10000' /var/lib/boma/vaultwarden/db.sqlite3 "
         "\"INSERT INTO users (uuid,email,name) VALUES ('newbie','n@x.test','N');\""
     )
 
@@ -642,3 +642,78 @@ def test_drill_ignores_pre_update_snapshots_when_judging_freshness(
     assert "never produced one" in result.stderr, (
         "a pre-update snapshot satisfied the nightly-freshness check"
     )
+
+
+def _stub_gh(container: Container, auth_exit: int, verify_exit: int) -> None:
+    """Install a fake `gh` so attestation behaviour can be driven precisely.
+
+    Real gh needs credentials and network; what matters here is only how boma
+    reacts to the two distinct outcomes.
+    """
+    container.exec(
+        "cat > /usr/local/bin/gh <<'EOF'\n"
+        "#!/bin/sh\n"
+        'case "$1" in\n'
+        f"  auth) exit {auth_exit} ;;\n"
+        f"  attestation) exit {verify_exit} ;;\n"
+        "esac\n"
+        "exit 0\n"
+        "EOF\n"
+        "chmod 0755 /usr/local/bin/gh"
+    )
+
+
+def test_install_proceeds_when_attestation_cannot_be_checked(
+    container: Container, env_base: dict[str, str]
+) -> None:
+    """An unauthenticated gh must not brick the host.
+
+    `gh attestation verify` requires credentials and exits 4 without them. A
+    fresh Pi has no authenticated gh, so treating that as a verification
+    FAILURE aborted every install and every unattended update — turning a
+    defence-in-depth control into a total outage.
+    """
+    container.exec("mkdir -p /srv/restic")
+    _stub_gh(container, auth_exit=1, verify_exit=4)
+
+    result = container.exec(
+        install_cmd("--restic-repo /srv/restic"), env=env_base, check=False
+    )
+    assert result.returncode == 0, (
+        f"install aborted because provenance could not be checked:\n{result.stderr}"
+    )
+    assert "NOT verified" in result.stderr
+    assert "not authenticated" in result.stderr
+    assert container.unit_active("vaultwarden.service")
+
+
+def test_install_aborts_when_attestation_actually_fails(
+    container: Container, env_base: dict[str, str]
+) -> None:
+    """A real verification failure is an attack signal and must still abort."""
+    container.exec("mkdir -p /srv/restic")
+    # Authenticated, and verification genuinely fails.
+    _stub_gh(container, auth_exit=0, verify_exit=1)
+
+    result = container.exec(
+        install_cmd("--restic-repo /srv/restic"), env=env_base, check=False
+    )
+    assert result.returncode != 0, "a failed attestation must abort the install"
+    assert "attestation FAILED" in result.stderr
+    assert not container.path_exists("/opt/boma/vaultwarden/bin/vaultwarden")
+
+
+def test_require_attestation_makes_unverifiable_fatal(
+    container: Container, env_base: dict[str, str]
+) -> None:
+    """Operators who have a token can opt into strictness."""
+    container.exec("mkdir -p /srv/restic")
+    _stub_gh(container, auth_exit=1, verify_exit=4)
+
+    env = dict(env_base)
+    env["VW_REQUIRE_ATTESTATION"] = "1"
+    result = container.exec(
+        install_cmd("--restic-repo /srv/restic"), env=env, check=False
+    )
+    assert result.returncode != 0
+    assert "VW_REQUIRE_ATTESTATION=1" in result.stderr
