@@ -111,32 +111,27 @@ jobs:
           # vendored_openssl compiles OpenSSL from source, which needs perl + make.
           sudo apt-get install -y --no-install-recommends musl-tools musl-dev perl make
 
-      - name: Install Rust toolchain
+      - name: Install Rust toolchain and target
+        # Run INSIDE the checkout so upstream's rust-toolchain.toml applies.
+        #
+        # Vaultwarden pins its toolchain there (currently 1.97.1). Adding the
+        # target from the workspace root added it to `stable` instead, and then
+        # `cargo build` inside this directory silently switched to the pinned
+        # toolchain — which did not have the musl target, failing with
+        # "can't find crate for `core`". Running here means the target is always
+        # added to whatever upstream actually pins, including future changes.
+        working-directory: vaultwarden
         run: |
           set -euo pipefail
-          # Honour upstream's rust-version so we never build with a toolchain
-          # older than the one they support.
-          required=$(grep -m1 '^rust-version' vaultwarden/Cargo.toml | cut -d'"' -f2)
-          echo "Upstream requires Rust ${required}"
 
-          # Install stable AND verify it satisfies upstream's MSRV. Parsing the
-          # requirement and then installing plain stable regardless made the
-          # check decorative: a stable older than upstream's minimum would fail
-          # deep in the build with a confusing dependency error instead of here.
-          rustup toolchain install stable --profile minimal
-          rustup default stable
+          # Materialises the pinned toolchain (rustup reads rust-toolchain.toml).
+          rustup show active-toolchain
           rustup target add "${TARGET}"
-          rustc --version
 
-          if [ -n "${required}" ]; then
-            have=$(rustc --version | awk '{print $2}')
-            lowest=$(printf '%s\n%s\n' "${required}" "${have}" | sort -V | head -1)
-            if [ "${lowest}" != "${required}" ] && [ "${have}" != "${required}" ]; then
-              echo "::error::stable Rust ${have} is older than upstream's required ${required}"
-              exit 1
-            fi
-            echo "Rust ${have} satisfies the required ${required}"
-          fi
+          echo "Toolchain in use: $(rustup show active-toolchain)"
+          echo "rustc: $(rustc --version)"
+          rustup target list --installed | grep -qx "${TARGET}" \
+            || { echo "::error::${TARGET} is not installed for the active toolchain"; exit 1; }
 
       - name: Cache cargo registry and build artifacts
         uses: actions/cache@v6
@@ -145,7 +140,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             vaultwarden/target
-          key: cargo-${{ env.TARGET }}-${{ env.VERSION }}
+          key: cargo-${{ env.TARGET }}-${{ env.VERSION }}-v2
           restore-keys: cargo-${{ env.TARGET }}-
 
       - name: Build
