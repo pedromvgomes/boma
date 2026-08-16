@@ -1,49 +1,19 @@
-name: CI
+# ci-end2end — this file is yours.
+#
+# gt created it once and will never modify or delete it again. It is called by
+# ci-orchestration.yml and must keep `workflow_call`.
+#
+# Runs on native arm64 to match the Raspberry Pi target.
+#
+name: ci-end2end
 
 on:
-  push:
-    branches: [main]
-  pull_request:
+  workflow_call:
 
 permissions:
   contents: read
 
-concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
-  lint:
-    name: shellcheck
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Install shellcheck
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends shellcheck
-
-      - name: Lint all shell scripts
-        run: |
-          set -euo pipefail
-          # -x follows `source` directives so library functions resolve.
-          shellcheck -x -S style lib/*.sh services/*/*.sh
-
-  unit:
-    name: bats unit tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Install bats
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends bats
-
-      - name: Run unit tests
-        run: bats lib/test/
-
   e2e:
     name: pytest end-to-end
     # Native arm64, matching the Raspberry Pi target and the developer's Mac,
