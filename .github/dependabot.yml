@@ -1,32 +1,63 @@
+# Managed by gt — edit .gt-repo.yaml, then run `gt repo sync`.
+#
+# Shared policy (cooldown, commit-message prefix, schedule) lives in gt's
+# template, not here, so changing it for every repo is a one-line edit in gt.
+#
+# The 7-day cooldown is the supply-chain guard: by the time a PR exists,
+# the upstream release has been in the wild long enough to surface yanks and
+# compromised publishers before an auto-merge-eligible PR lands on the default
+# branch.
 version: 2
-
-# Three ecosystems, because adding Python to a Bash repo was not the only new
-# dependency surface. Note there is deliberately no `gitsubmodule` entry: the
-# bats helper libraries were not vendored as submodules, so the unit tests use
-# plain bats-core with no third-party assertion helpers.
 updates:
-  # GitHub Actions used by the build and CI workflows.
-  - package-ecosystem: github-actions
-    directory: /
+  # The Debian base image of the end-to-end test container. This only works
+  # because the file is named `Dockerfile` — Dependabot's docker ecosystem
+  # does not discover a file named `Containerfile`.
+  - package-ecosystem: "docker"
+    directory: "/services/vaultwarden/test"
     schedule:
-      interval: weekly
+      interval: "weekly"
+    # Dependabot's commit message is also its PR title, and PRs are
+    # squash-merged, so the prefix is what keeps dependency updates inside
+    # Conventional Commits. `include: scope` appends the dependency scope,
+    # producing e.g. `build(deps): bump …`.
     commit-message:
-      prefix: ci
+      prefix: "build"
+      include: scope
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 25
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    # Dependabot's commit message is also its PR title, and PRs are
+    # squash-merged, so the prefix is what keeps dependency updates inside
+    # Conventional Commits. `include: scope` appends the dependency scope,
+    # producing e.g. `ci(deps): bump …`.
+    commit-message:
+      prefix: "ci"
+      include: scope
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 25
 
   # pytest and friends, pinned via pyproject.toml / uv.lock.
-  - package-ecosystem: pip
-    directory: /
+  #
+  # There is deliberately no gitsubmodule entry anywhere in this file: the
+  # bats helper libraries were not vendored as submodules, so the unit tests
+  # use plain bats-core with no third-party assertion helpers.
+  - package-ecosystem: "pip"
+    directory: "/"
     schedule:
-      interval: weekly
+      interval: "weekly"
+    # Dependabot's commit message is also its PR title, and PRs are
+    # squash-merged, so the prefix is what keeps dependency updates inside
+    # Conventional Commits. `include: scope` appends the dependency scope,
+    # producing e.g. `build(deps): bump …`.
     commit-message:
-      prefix: test
-
-  # The Debian base image of the end-to-end test container. This only works
-  # because the file is named `Dockerfile`; Dependabot's docker ecosystem does
-  # not discover a file named `Containerfile`.
-  - package-ecosystem: docker
-    directory: /services/vaultwarden/test
-    schedule:
-      interval: weekly
-    commit-message:
-      prefix: test
+      prefix: "build"
+      include: scope
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 25
