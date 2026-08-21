@@ -181,6 +181,11 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+    with:
+      # Nothing here for bulwark to measure, so the coverage gate is off. Left
+      # on, it resolves a baseline for languages that do not exist and reports a
+      # number that means nothing — which is how a gate stops being read.
+      coverage: false
 
   # The single required check. `if: always()` so it still reports when a stage
   # was skipped, and a skipped stage passes — that is the point of preflight.

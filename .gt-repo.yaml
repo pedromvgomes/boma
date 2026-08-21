@@ -10,7 +10,7 @@
 # never touches them again. Branch protection needs exactly one check, ci-gate,
 # which waits on all of them.
 
-gt_version: 1.1.0
+gt_version: 1.2.0
 dependabot:
   - ecosystem: docker
     directory: /services/vaultwarden/test
@@ -36,6 +36,7 @@ dependabot_auto_merge:
   github_app: false
 bulwark:
   enabled: true
+  coverage: false
 pipeline:
   ci:
     enabled: true
