@@ -1,10 +1,10 @@
 # ci-end2end — this file is yours.
 #
-# gt created it once and will never modify or delete it again. Put this
-# repository's end-to-end tests here; the orchestration around it stays gt's.
+# gt created it once and will never modify or delete it again.
 #
-# It is called by ci-orchestration.yml and must keep `workflow_call`, or the
-# orchestrator loses the stage.
+# The pytest end-to-end suite, moved from ci.yml verbatim. It drives a real
+# vaultwarden container under podman, which is what makes it end2end rather
+# than test.
 name: ci-end2end
 
 on:
@@ -14,10 +14,35 @@ permissions:
   contents: read
 
 jobs:
-  end2end:
-    name: end2end
-    runs-on: ubuntu-latest
+  e2e:
+    name: pytest end-to-end
+    # Native arm64, matching the Raspberry Pi target and the developer's Mac,
+    # so the container exercises the same architecture throughout.
+    runs-on: ubuntu-24.04-arm
     steps:
-      # A no-op so the stage is green from the first run. Replace it.
-      - name: Nothing to do yet
-        run: echo "No end2end steps defined. Add them in .github/workflows/ci-end2end.yml"
+      - uses: actions/checkout@v7
+
+      - name: Install podman
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends podman
+
+      - name: Install uv
+        # Pinned to an exact version: setup-uv publishes no floating major tag,
+        # so `@v9` does not resolve. checkout/cache/attest do publish them.
+        uses: astral-sh/setup-uv@v10.0.0
+        with:
+          enable-cache: true
+
+      - name: Run end-to-end suite
+        # Parallelism comes from pyproject's addopts (-n 4).
+        run: uv run --group test pytest services/ -q
+
+      - name: Collect container diagnostics on failure
+        if: failure()
+        run: |
+          podman ps -a || true
+          for c in $(podman ps -aq); do
+            echo "=== $c ==="
+            podman logs "$c" 2>&1 | tail -50 || true
+          done

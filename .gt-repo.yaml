@@ -10,7 +10,7 @@
 # never touches them again. Branch protection needs exactly one check, ci-gate,
 # which waits on all of them.
 
-gt_version: v1.0.0
+gt_version: 1.2.0
 dependabot:
   - ecosystem: docker
     directory: /services/vaultwarden/test
@@ -33,11 +33,10 @@ dependabot_auto_merge:
   schedule: 0 1 * * *
   max_bump: minor
   delete_branch: true
+  github_app: false
 bulwark:
-  # On. There is no security scanning here today, so gt's stage is an addition
-  # rather than a duplicate. Expect findings on the first run; nothing gates on
-  # them while ci-gate is not the required check.
   enabled: true
+  coverage: false
 pipeline:
   ci:
     enabled: true
@@ -47,10 +46,6 @@ pipeline:
       - test
       - end2end
     merge_queue: false
-  # Off. There is no tag-triggered release workflow here — build-vaultwarden.yml
-  # runs on a schedule — but cd-orchestration would claim `v*.*.*` with
-  # verify-attestation require: true, so the first tag pushed would go red on a
-  # pipeline that ships nothing.
   cd:
     enabled: false
     stages:
@@ -81,10 +76,16 @@ settings:
     merge_commit: false
     rebase: false
     delete_branch_on_merge: true
+    squash_title: pr_title
+    squash_message: blank
   branch_protection:
     branch: main
     required_approvals: 0
     require_up_to_date: false
+    dismiss_stale_reviews: true
+    require_thread_resolution: true
+    require_code_owner_review: false
+    require_last_push_approval: false
 files:
   - sync
   - dependabot-auto-merge

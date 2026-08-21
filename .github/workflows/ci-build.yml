@@ -1,10 +1,8 @@
 # ci-build — this file is yours.
 #
-# gt created it once and will never modify or delete it again. Put this
-# repository's build steps here; the orchestration around it stays gt's.
+# gt created it once and will never modify or delete it again.
 #
-# It is called by ci-orchestration.yml and must keep `workflow_call`, or the
-# orchestrator loses the stage.
+# shellcheck over every shell script, moved from ci.yml verbatim.
 name: ci-build
 
 on:
@@ -14,10 +12,19 @@ permissions:
   contents: read
 
 jobs:
-  build:
-    name: build
+  lint:
+    name: shellcheck
     runs-on: ubuntu-latest
     steps:
-      # A no-op so the stage is green from the first run. Replace it.
-      - name: Nothing to do yet
-        run: echo "No build steps defined. Add them in .github/workflows/ci-build.yml"
+      - uses: actions/checkout@v7
+
+      - name: Install shellcheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends shellcheck
+
+      - name: Lint all shell scripts
+        run: |
+          set -euo pipefail
+          # -x follows `source` directives so library functions resolve.
+          shellcheck -x -S style lib/*.sh services/*/*.sh

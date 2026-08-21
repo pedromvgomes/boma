@@ -1,16 +1,8 @@
 # ci-test — this file is yours.
 #
-# gt created it once and will never modify or delete it again. Put this
-# repository's test suite here; the orchestration around it stays gt's.
+# gt created it once and will never modify or delete it again.
 #
-# Upload coverage as an artifact named `gt-coverage` and the bulwark
-# stage will consume it instead of running the suite a second time. Without it
-# bulwark falls back to running the tests itself, which is correct but slower.
-#
-#   - uses: actions/upload-artifact@<sha>
-#     with:
-#       name: gt-coverage
-#       path: coverage.out
+# The bats unit suite, moved from ci.yml verbatim.
 name: ci-test
 
 on:
@@ -20,10 +12,16 @@ permissions:
   contents: read
 
 jobs:
-  test:
-    name: test
+  unit:
+    name: bats unit tests
     runs-on: ubuntu-latest
     steps:
-      # A no-op so the stage is green from the first run. Replace it.
-      - name: Nothing to do yet
-        run: echo "No test steps defined. Add them in .github/workflows/ci-test.yml"
+      - uses: actions/checkout@v7
+
+      - name: Install bats
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends bats
+
+      - name: Run unit tests
+        run: bats lib/test/
