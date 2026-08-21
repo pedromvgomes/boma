@@ -17,4 +17,9 @@
 # tolerances, patch-coverage opt-outs, toolchain overrides — belongs here too.
 # See bulwark's README.
 coverage:
-  source: report
+  # `run`, not `report`: nothing in this pipeline writes a coverage profile.
+  # The bats suite is shell and the pytest suite drives containers, so there is
+  # no report for bulwark to read — and told to read one, it exits rather than
+  # shrugging. Change this to `report` in the same commit that makes ci-test
+  # upload a `gt-coverage` artifact.
+  source: run
