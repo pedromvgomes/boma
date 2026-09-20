@@ -1,6 +1,26 @@
-root: agentic
-extends:
+# Entry manifest for agentic-toolkit. `agtk sync` renders every platform named
+# below from these stacks plus this repo's own content, found by convention
+# under `agentic/<category>/` — nothing local is listed here.
+#
+# The rendered output (.claude/, CLAUDE.md, .mcp.json, .codex/, .agents/,
+# AGENTS.md) is generated and gitignored; the lockfile beside this file is not.
+
+stacks:
   - github.com/pedromvgomes/agentic-toolkit.git/stacks/default.yaml
   - github.com/pedromvgomes/agentic-toolkit.git/stacks/plannotator.yaml
   - github.com/pedromvgomes/agentic-toolkit.git/stacks/serena.yaml
   - github.com/pedromvgomes/agentic-toolkit.git/stacks/rtk.yaml
+
+# Both platforms, so a Codex session reads the same repo instructions a Claude
+# one does. AGENTS.md is agtk's output under `codex` — it is rewritten from
+# `agentic/instructions/` on every render, so nothing hand-written belongs there.
+platforms:
+  - claude
+  - codex
+
+# The default stack ships the memory store and its flow. `agent` has no default
+# — curation is the one operation that spends money, so an unconfigured repo is
+# refused rather than guessed at.
+memory:
+  root: .memory
+  agent: claudecode

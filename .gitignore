@@ -12,9 +12,17 @@ node_modules/
 __pycache__/
 .pytest_cache/
 
-# files and folders managed by agentic toolkit
-.claude
-.mcp.json
-CLAUDE.md
-.agentic-toolkit.lock.yaml
-.serena/
+# Agentic-toolkit generated outputs — rendered from .agentic-toolkit.yaml (and
+# the stacks it extends) on every toolkit sync. The config and lockfile are
+# committed; these regenerate, so they are never committed. Anchored to the
+# repo root so intentionally tracked CLAUDE.md files in subdirectories are
+# unaffected.
+/.claude/
+/CLAUDE.md
+/.mcp.json
+/.codex/
+/.agents/
+/AGENTS.md
+
+# Serena's per-checkout project cache.
+/.serena/
