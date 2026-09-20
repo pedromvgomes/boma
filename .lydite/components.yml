@@ -1,0 +1,29 @@
+# Two components, because boma has two independent, pre-existing test
+# suites, and neither is a language lydite's runners support. Bash and
+# Python both take a raw `command:`, which opts out of the derived plain /
+# instrumented / build-only variants entirely — there is no coverage
+# instrumentation or build-only step lydite knows how to splice into either
+# invocation, so a component declared this way is only ever run, never
+# measured. `lydite test` reports its test row from the command's exit code
+# and reports coverage, crap and mutation unmeasured, with a reason, rather
+# than silently passing them.
+#
+# Both commands are copied from the workflow that already runs them
+# (.github/workflows/ci-test.yml, ci-end2end.yml), because the actual
+# invocation convention — the working directory each tool expects, and the
+# path it wants its target named relative to — is normative there and
+# guessing at an equivalent from a component's own `dir:` risks disagreeing
+# with what CI actually runs.
+components:
+  - name: lib-bats
+    dir: .
+    command: ["bats", "lib/test/"]
+
+  - name: vaultwarden-e2e
+    dir: .
+    # uv resolves the workspace from pyproject.toml/uv.lock, both at the
+    # repository root — `uv run` from anywhere else would not find them. The
+    # test path is `services/` rather than a narrower `services/vaultwarden`
+    # because that is what CI passes and what pyproject's own
+    # `testpaths = ["services"]` already scopes it to.
+    command: ["uv", "run", "--group", "test", "pytest", "services/", "-q"]
