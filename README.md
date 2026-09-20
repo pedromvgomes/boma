@@ -15,7 +15,8 @@ docs/
   adr/                   why things are the way they are
 lib/                     shared shell library + bats unit tests
 services/<name>/         one directory per service: scripts, systemd units, tests
-.github/workflows/       build-vaultwarden.yml (artifacts), ci.yml (lint + tests)
+agentic/                 agent-facing instructions, rules and references
+.github/workflows/       build-vaultwarden.yml (artifacts), ci-* (the gt pipeline stages)
 ```
 
 Adding a service means adding one directory under `services/`, tests included.

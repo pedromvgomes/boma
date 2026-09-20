@@ -30,4 +30,4 @@ Development and testing happen on macOS `arm64` via podman. Because the Vaultwar
 statically linked for `aarch64-unknown-linux-musl`, the container exercises the byte-identical
 artifact that runs on the Pi — the test is not an approximation.
 
-See `docs/adr/0001-build-from-source.md` for how that binary is produced.
+See `docs/adr/0001-build-vaultwarden-from-source.md` for how that binary is produced.
